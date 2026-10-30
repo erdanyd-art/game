@@ -8,10 +8,13 @@ export const LANE_WIDTH = 2.4;
 export const LANE_SWITCH_TIME = 0.14;
 
 export const GRAVITY = 25;
+
+/** Seconds until touching down, from height y rising at vy. */
+export const timeToLand = (y: number, vy: number) => (vy + Math.sqrt(vy * vy + 2 * GRAVITY * Math.max(0, y))) / GRAVITY;
 /** A normal hop: 0.64 s in the air, 1.28 m high. Clears logs, not rocks. */
 export const JUMP_VY = 8;
-/** Off a wave ramp: 1.04 s in the air, 3.38 m high. Clears a row of boats. */
-export const RAMP_VY = 13;
+/** Off a wave ramp: 1.2 s in the air, 4.5 m high. Clears a row of boats, sails and all. */
+export const RAMP_VY = 15;
 /** Pressing down in the air drops you fast. */
 export const SLAM_VY = -20;
 export const DUCK_TIME = 0.6;
@@ -69,13 +72,20 @@ export function clearWindow(vy: number, height: number): [number, number] | null
 }
 
 /**
+ * A ramp launches you while any of the hull is over it: from the nose touching
+ * its near edge until the tail leaves its far edge. This is how far the nose
+ * travels in that time, so a late launch is up to this much further on.
+ */
+export const RAMP_REACH = SPECS.ramp.length + PLAYER.front + PLAYER.back;
+
+/**
  * How far past a ramp's near edge to put an obstacle so a ramp jump at `speed`
- * clears all of it, front to back, with the most room either side.
+ * clears all of it, front to back, however early or late on the ramp it launched.
  */
 export function overRampOffset(speed: number, kind: ObstacleKind): number {
   const [t1, t2] = clearWindow(RAMP_VY, SPECS[kind].height)!;
   const span = SPECS[kind].length + PLAYER.front + PLAYER.back;
-  return (speed * (t1 + t2)) / 2 - span / 2;
+  return (speed * (t1 + t2)) / 2 - span / 2 + RAMP_REACH / 2;
 }
 
 /** Speed of other jetskis riding the same way, and of a banana boat crossing. */

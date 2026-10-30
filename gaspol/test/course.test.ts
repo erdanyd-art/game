@@ -8,6 +8,7 @@ import {
   LANE_X,
   overRampOffset,
   PLAYER,
+  RAMP_REACH,
   RAMP_VY,
   SPECS,
   speedAt,
@@ -18,7 +19,9 @@ import { Course, crossingTime, type Row } from "../src/course.ts";
 // States are (lane, when the next hop can start, when the last ramp launched).
 // An obstacle is overlapped from the moment the jetski's nose reaches it until
 // its tail leaves, so the whole of that interval must be cleared, not one instant.
-type State = { lane: number; free: number; ramp: number | null };
+// A ramp launches anywhere from the nose touching it to the tail leaving it, so
+// whatever follows has to work for the earliest launch and the latest alike.
+type State = { lane: number; free: number; ramp: number | null; late: number };
 
 const RAMP_AIR = airtime(RAMP_VY);
 const LENGTHS: Record<string, number> = { B: SPECS.boat.length, R: SPECS.rock.length, T: SPECS.jetski.length, P: SPECS.pillar.length, D: SPECS.deck.length, L: SPECS.log.length, N: SPECS.net.length, H: SPECS.rope.length };
@@ -31,9 +34,11 @@ function clears(vy: number, start: number, t: number, span: number, kind: keyof 
   const window = clearWindow(vy, SPECS[kind].bottom + SPECS[kind].height);
   return window !== null && t - start >= window[0] && t + span - start <= window[1];
 }
+const clearsEither = (s: State, t: number, span: number, kind: keyof typeof SPECS) =>
+  clears(RAMP_VY, s.ramp!, t, span, kind) && clears(RAMP_VY, s.late, t, span, kind);
 
 function solve(rows: Row[]): { ok: true } | { ok: false; at: number; row: Row } {
-  let states: State[] = [{ lane: 1, free: 0, ramp: null }];
+  let states: State[] = [{ lane: 1, free: 0, ramp: null, late: 0 }];
   let previous: Row | null = null;
   for (const [i, row] of rows.entries()) {
     const next = new Map<string, State>();
@@ -45,27 +50,29 @@ function solve(rows: Row[]): { ok: true } | { ok: false; at: number; row: Row } 
         const moves = Math.abs(lane - s.lane);
         if (moves > 0 && moves * LANE_SWITCH_TIME > window - alongside - 0.05) continue;
         const cell = row.cells[lane];
-        const flying = s.ramp !== null && row.time < s.ramp + RAMP_AIR;
+        const flying = s.ramp !== null && row.time < s.late + RAMP_AIR;
         const ramp = flying ? s.ramp : null;
+        const late = s.late;
         let result: State | null = null;
-        if (cell === ".") result = { lane, free: s.free, ramp };
+        if (cell === ".") result = { lane, free: s.free, ramp, late };
         else if (cell in CLEARABLE) {
           const kind = CLEARABLE[cell];
-          result = flying && clears(RAMP_VY, s.ramp!, row.time, overlap(kind, row.z), kind) ? { lane, free: s.free, ramp } : null;
+          result = flying && clearsEither(s, row.time, overlap(kind, row.z), kind) ? { lane, free: s.free, ramp, late } : null;
         } else if (cell === "L" || cell === "N") {
           const kind = cell === "L" ? "log" : "net";
           const span = overlap(kind, row.z);
-          if (flying) result = clears(RAMP_VY, s.ramp!, row.time, span, kind) ? { lane, free: s.free, ramp } : null;
+          if (flying) result = clearsEither(s, row.time, span, kind) ? { lane, free: s.free, ramp, late } : null;
           else {
             // The latest take-off that still clears it, but not before the last landing.
             const [t1, t2] = clearWindow(JUMP_VY, SPECS[kind].height)!;
             const start = Math.max(s.free, row.time + span - t2);
-            if (start <= row.time - t1) result = { lane, free: start + airtime(JUMP_VY), ramp: null };
+            if (start <= row.time - t1) result = { lane, free: start + airtime(JUMP_VY), ramp: null, late };
           }
         } else if (cell === "H" || cell === "D") {
-          result = !flying && s.free <= row.time - 0.05 ? { lane, free: Math.max(s.free, row.time + 0.05), ramp: null } : null;
+          result = !flying && s.free <= row.time - 0.05 ? { lane, free: Math.max(s.free, row.time + 0.05), ramp: null, late } : null;
         } else if (cell === "J") {
-          result = !flying && s.free <= row.time ? { lane, free: row.time + RAMP_AIR, ramp: row.time } : null;
+          const latest = row.time + RAMP_REACH / speedAt(row.z);
+          result = !flying && s.free <= row.time ? { lane, free: latest + RAMP_AIR, ramp: row.time, late: latest } : null;
         }
         // "P" (a pillar under a pier) is never passable.
         if (result) next.set(`${result.lane}|${result.free.toFixed(2)}|${result.ramp ?? "-"}`, result);
@@ -145,13 +152,15 @@ test("coins and power-ups never sit inside something solid", () => {
   }
 });
 
-test("a wall behind a ramp is cleared front to back at every speed, even 30% slowed", () => {
+test("a wall behind a ramp is cleared front to back at every speed, launched anywhere on the ramp", () => {
   for (const speed of [20, 23, 30, 42]) {
     const offset = overRampOffset(speed, "boat");
     const span = SPECS.boat.length + PLAYER.front + PLAYER.back;
     for (const v of [speed, speed * 1.45]) {
-      const tIn = offset / v;
-      assert.ok(clears(RAMP_VY, 0, tIn, span / v, "boat"), `${speed} m/s course, riding at ${v.toFixed(0)} m/s`);
+      for (const late of [0, RAMP_REACH / 2, RAMP_REACH]) {
+        const tIn = (offset - late) / v;
+        assert.ok(clears(RAMP_VY, 0, tIn, span / v, "boat"), `${speed} m/s course, riding at ${v.toFixed(0)} m/s, launched ${late.toFixed(1)} m late`);
+      }
     }
   }
 });

@@ -46,6 +46,16 @@ body {
   touch-action: none;
 }
 
+/* Popups and speed lines, drawn in 2D over the 3D scene. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 button {
   font: inherit;
   color: inherit;
@@ -88,7 +98,30 @@ kbd {
   box-shadow: 0 2px 0 var(--orange-deep), 0 6px 12px rgba(0, 0, 0, 0.3);
 }
 
+.revive-btn {
+  display: block;
+  width: min(320px, 100%);
+  margin: 0 auto 12px;
+  padding: 12px 20px 10px;
+  border: 0;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #4ce0b3, #06a77d);
+  box-shadow: 0 6px 0 #04694f;
+  color: #032b20;
+  font-family: var(--display);
+  font-size: 22px;
+  letter-spacing: 0.03em;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.revive-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+  animation: none;
+}
+
 .row-btns {
+  flex-wrap: wrap;
   display: flex;
   justify-content: center;
   gap: 10px;
@@ -225,6 +258,75 @@ kbd {
   font-family: var(--display);
   font-size: 26px;
   font-weight: 400;
+  color: var(--sun);
+}
+
+.missions-box {
+  max-width: 420px;
+  margin: -6px auto 22px;
+  padding: 12px 14px 10px;
+  border-radius: 18px;
+  background: rgba(31, 21, 71, 0.6);
+  text-align: left;
+  backdrop-filter: blur(6px);
+}
+
+.missions-box h2 {
+  margin: 0 0 6px;
+  color: var(--sun);
+  font-family: var(--display);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.missions {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.missions li {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+
+.missions b {
+  flex-shrink: 0;
+  color: var(--sun);
+}
+
+.missions i {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--sun);
+}
+
+.over-missions {
+  display: grid;
+  gap: 4px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 210, 63, 0.12);
+  list-style: none;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.over-missions .reward {
   color: var(--sun);
 }
 

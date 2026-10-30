@@ -7,6 +7,7 @@ import {
   LANE_X,
   overRampOffset,
   PLAYER,
+  RAMP_REACH,
   RAMP_VY,
   SPECS,
   speedAt,
@@ -247,7 +248,8 @@ export class Course {
       this.rows.push(current);
       this.spawnRow(current, pattern.banana === true && i === 0, mirror, batch);
       this.coinsFor(previous, current, batch);
-      if (cells.includes("J")) this.landed = time + airtime(RAMP_VY) + RAMP_LANDING_MARGIN;
+      // Down again after the latest launch the ramp allows: the tail leaving its far edge.
+      if (cells.includes("J")) this.landed = time + RAMP_REACH / speedAt(z) + airtime(RAMP_VY) + RAMP_LANDING_MARGIN;
       this.lastCells = cells.join("");
       previous = current;
     }

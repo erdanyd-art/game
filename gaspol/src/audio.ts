@@ -34,8 +34,25 @@ export class Sound implements Sfx {
   private music: GainNode | null = null;
   private sfx: GainNode | null = null;
   private noise: AudioBuffer | null = null;
-  private engine: { osc: OscillatorNode; sub: OscillatorNode; filter: BiquadFilterNode; gain: GainNode; water: GainNode } | null = null;
+  private engine: {
+    osc: OscillatorNode;
+    second: OscillatorNode;
+    sub: OscillatorNode;
+    whine: OscillatorNode;
+    whineGain: GainNode;
+    body: BiquadFilterNode;
+    out: GainNode;
+    rushBand: BiquadFilterNode;
+    water: GainNode;
+    hiss: GainNode;
+    wind: GainNode;
+    windBand: BiquadFilterNode;
+    sources: AudioScheduledSourceNode[];
+    lastSlap: number;
+    lastTime: number;
+  } | null = null;
   private muted = false;
+  private sirenNodes: { gain: GainNode; sources: OscillatorNode[] } | null = null;
   private scheduler = 0;
   private start = 0;
   private step = 0;
@@ -60,9 +77,60 @@ export class Sound implements Sfx {
     compressor.ratio.value = 4;
     compressor.connect(ctx.destination);
     this.master = gain(ctx, this.muted ? 0 : MASTER, compressor);
-    this.music = gain(ctx, 0.5, this.master);
-    this.sfx = gain(ctx, 0.75, this.master);
+    this.music = gain(ctx, 0.32, this.master);
+    this.sfx = gain(ctx, 0.85, this.master);
     this.noise = makeNoise(ctx);
+    this.startShore(ctx);
+  }
+
+  /** Waves breaking on the beach, rising and falling, and a seagull now and then. */
+  private startShore(ctx: AudioContext) {
+    if (!this.noise || !this.sfx) return;
+    const surf = ctx.createBufferSource();
+    surf.buffer = this.noise;
+    surf.loop = true;
+    surf.playbackRate.value = 0.5;
+    const low = ctx.createBiquadFilter();
+    low.type = "lowpass";
+    low.frequency.value = 700;
+    const swell = gain(ctx, 0.035, this.sfx);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.09;
+    lfo.connect(gain(ctx, 0.03, swell.gain));
+    surf.connect(low).connect(swell);
+    surf.start();
+    lfo.start();
+    const gull = () => {
+      this.seagull();
+      window.setTimeout(gull, 6000 + Math.random() * 10000);
+    };
+    window.setTimeout(gull, 3000);
+  }
+
+  private seagull() {
+    const b = this.buses();
+    if (!b || b.ctx.state !== "running") return;
+    const t = b.ctx.currentTime;
+    const calls = 2 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < calls; i++) {
+      const at = t + i * (0.22 + Math.random() * 0.1);
+      const o = b.ctx.createOscillator();
+      o.type = "sawtooth";
+      const base = 1300 + Math.random() * 300;
+      o.frequency.setValueAtTime(base * 1.4, at);
+      o.frequency.exponentialRampToValueAtTime(base, at + 0.18);
+      const f = b.ctx.createBiquadFilter();
+      f.type = "bandpass";
+      f.frequency.value = 2200;
+      f.Q.value = 2;
+      const g = b.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.03, at + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.2);
+      o.connect(f).connect(g).connect(b.sfx);
+      o.start(at);
+      o.stop(at + 0.22);
+    }
   }
 
   setMuted(muted: boolean) {
@@ -84,7 +152,7 @@ export class Sound implements Sfx {
     if (!b) return;
     const t = b.ctx.currentTime;
     b.music.gain.cancelScheduledValues(t);
-    b.music.gain.setValueAtTime(0.5, t);
+    b.music.gain.setValueAtTime(0.32, t);
     this.start = t + 0.1;
     this.step = 0;
     this.scheduler = window.setInterval(() => this.schedule(), 25);
@@ -92,6 +160,7 @@ export class Sound implements Sfx {
   }
 
   stopMusic(fade = 0.6) {
+    this.siren(false);
     window.clearInterval(this.scheduler);
     this.scheduler = 0;
     const b = this.buses();
@@ -108,43 +177,94 @@ export class Sound implements Sfx {
     const b = this.buses();
     if (!b || this.engine || !this.noise) return;
     const { ctx } = b;
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = 900;
-    filter.Q.value = 3;
+    const now = ctx.currentTime;
     const out = gain(ctx, 0, this.sfx!);
-    out.gain.setTargetAtTime(0.05, ctx.currentTime, 0.2);
-    filter.connect(out);
+    out.gain.setTargetAtTime(0.06, now, 0.25);
+    // Harmonics through a soft clipper: the rasp of a small two-stroke.
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = softClip(2.5);
+    const body = ctx.createBiquadFilter();
+    body.type = "lowpass";
+    body.frequency.value = 1400;
+    body.Q.value = 1.2;
+    shaper.connect(body).connect(out);
+    const pre = gain(ctx, 0.6, shaper);
     const osc = ctx.createOscillator();
     osc.type = "sawtooth";
+    const second = ctx.createOscillator();
+    second.type = "sawtooth";
     const sub = ctx.createOscillator();
     sub.type = "square";
-    osc.connect(filter);
-    sub.connect(gain(ctx, 0.5, filter));
+    osc.connect(gain(ctx, 0.5, pre));
+    second.connect(gain(ctx, 0.25, pre));
+    sub.connect(gain(ctx, 0.35, pre));
+    // Firing pulses: the engine's putter rides on the tone.
+    const flutter = ctx.createOscillator();
+    flutter.frequency.value = 18;
+    flutter.connect(gain(ctx, 0.018, out.gain));
+    // The impeller's whine, high and thin.
+    const whine = ctx.createOscillator();
+    whine.type = "sine";
+    const whineGain = gain(ctx, 0.012, this.sfx!);
+    whine.connect(whineGain);
+
+    // Water rushing under the hull and spray hissing off it.
     const rush = ctx.createBufferSource();
     rush.buffer = this.noise;
     rush.loop = true;
-    const band = ctx.createBiquadFilter();
-    band.type = "bandpass";
-    band.frequency.value = 1300;
-    band.Q.value = 0.7;
-    const water = gain(ctx, 0.05, this.sfx!);
-    rush.connect(band).connect(water);
-    for (const node of [osc, sub, rush]) node.start();
-    this.engine = { osc, sub, filter, gain: out, water };
+    const rushBand = ctx.createBiquadFilter();
+    rushBand.type = "bandpass";
+    rushBand.Q.value = 0.6;
+    const water = gain(ctx, 0, this.sfx!);
+    rush.connect(rushBand).connect(water);
+    const hissSource = ctx.createBufferSource();
+    hissSource.buffer = this.noise;
+    hissSource.loop = true;
+    hissSource.playbackRate.value = 1.3;
+    const hissFilter = ctx.createBiquadFilter();
+    hissFilter.type = "highpass";
+    hissFilter.frequency.value = 3500;
+    const hiss = gain(ctx, 0, this.sfx!);
+    hissSource.connect(hissFilter).connect(hiss);
+    // Wind, heard only in the air.
+    const windSource = ctx.createBufferSource();
+    windSource.buffer = this.noise;
+    windSource.loop = true;
+    windSource.playbackRate.value = 0.8;
+    const windBand = ctx.createBiquadFilter();
+    windBand.type = "bandpass";
+    windBand.frequency.value = 800;
+    windBand.Q.value = 1.4;
+    const wind = gain(ctx, 0, this.sfx!);
+    windSource.connect(windBand).connect(wind);
+
+    for (const node of [osc, second, sub, flutter, whine, rush, hissSource, windSource]) node.start();
+    this.engine = { osc, second, sub, whine, whineGain, body, out, rushBand, water, hiss, wind, windBand, sources: [osc, second, sub, flutter, whine, rush, hissSource, windSource], lastSlap: now, lastTime: now };
   }
 
-  /** Called every frame: pitch follows speed, revs up in the air, the water hiss stops. */
+  /** Called every frame: revs follow speed and leap when the jet leaves the water; water sounds follow the hull. */
   setEngine(speed: number, airborne: boolean, boost: boolean) {
     const e = this.engine;
     const ctx = this.ctx;
     if (!e || !ctx) return;
     const t = ctx.currentTime;
-    const freq = (55 + speed * 2.1 + (boost ? 30 : 0)) * (airborne ? 1.3 : 1);
-    e.osc.frequency.setTargetAtTime(freq, t, 0.08);
-    e.sub.frequency.setTargetAtTime(freq / 2, t, 0.08);
-    e.filter.frequency.setTargetAtTime(airborne ? 1600 : 700 + speed * 15, t, 0.1);
-    e.water.gain.setTargetAtTime(airborne ? 0.005 : 0.05, t, 0.05);
+    const dt = Math.min(0.1, t - e.lastTime);
+    e.lastTime = t;
+    const f = (34 + speed * 1.75 + (boost ? 16 : 0)) * (airborne ? 1.35 : 1);
+    e.osc.frequency.setTargetAtTime(f, t, airborne ? 0.12 : 0.08);
+    e.second.frequency.setTargetAtTime(f * 2.01, t, 0.08);
+    e.sub.frequency.setTargetAtTime(f / 2, t, 0.08);
+    e.whine.frequency.setTargetAtTime(f * 6.2, t, 0.1);
+    e.whineGain.gain.setTargetAtTime(airborne ? 0.02 : 0.008 + speed * 0.0002, t, 0.1);
+    e.body.frequency.setTargetAtTime(airborne ? 2400 : 900 + speed * 22, t, 0.1);
+    const pace = Math.min(1, speed / 40);
+    e.rushBand.frequency.setTargetAtTime(380 + speed * 18, t, 0.1);
+    e.water.gain.setTargetAtTime(airborne ? 0 : 0.05 + pace * 0.09, t, 0.05);
+    e.hiss.gain.setTargetAtTime(airborne ? 0.004 : 0.012 + pace * 0.03, t, 0.05);
+    e.wind.gain.setTargetAtTime(airborne ? 0.05 + pace * 0.06 : 0.008 * pace, t, 0.12);
+    e.windBand.frequency.setTargetAtTime(airborne ? 650 + Math.random() * 500 : 900, t, 0.3);
+    // The hull slapping the chop, more often the faster we go.
+    if (!airborne && dt > 0 && Math.random() < dt * (1.1 + speed * 0.07)) this.slap(0.4 + Math.random() * 0.6 * pace);
   }
 
   stopEngine() {
@@ -152,10 +272,32 @@ export class Sound implements Sfx {
     const ctx = this.ctx;
     if (!e || !ctx) return;
     const t = ctx.currentTime;
-    e.gain.gain.setTargetAtTime(0, t, 0.15);
-    e.water.gain.setTargetAtTime(0, t, 0.15);
-    for (const node of [e.osc, e.sub]) node.stop(t + 1);
+    for (const g of [e.out, e.water, e.hiss, e.wind, e.whineGain]) g.gain.setTargetAtTime(0, t, 0.15);
+    for (const node of e.sources) node.stop(t + 1);
     this.engine = null;
+  }
+
+  /** A short wet thump of the hull on a wave. */
+  private slap(strength: number) {
+    const b = this.buses();
+    if (!b) return;
+    const t = b.ctx.currentTime;
+    this.noiseBurst(t, 0.12, "lowpass", 300 + strength * 300, 0.8, 0.14 * strength, b.sfx);
+    this.sweep("sine", 95, 45, t, 0.1, 0.12 * strength, b.sfx);
+  }
+
+  /** A splash: thump, the wet "sploosh" of displaced water, then falling spray. */
+  splash(strength: number) {
+    const b = this.buses();
+    if (!b) return;
+    const t = b.ctx.currentTime;
+    this.sweep("sine", 110, 38, t, 0.3, 0.35 * strength, b.sfx);
+    this.noiseBurst(t, 0.55 + strength * 0.25, "lowpass", 2400, 0.9, 0.45 * strength, b.sfx, 220);
+    this.noiseBurst(t + 0.05, 0.9 + strength * 0.4, "highpass", 2800, 0.5, 0.12 * strength, b.sfx);
+    // Droplets pattering back down.
+    for (let i = 0; i < 6; i++) {
+      this.noiseBurst(t + 0.2 + Math.random() * 0.5, 0.05, "bandpass", 2500 + Math.random() * 2500, 3, 0.05 * strength, b.sfx);
+    }
   }
 
   // --- Sfx ---------------------------------------------------------------------
@@ -186,11 +328,7 @@ export class Sound implements Sfx {
   }
 
   land(hard: boolean) {
-    const b = this.buses();
-    if (!b) return;
-    const t = b.ctx.currentTime;
-    this.noiseBurst(t, hard ? 0.45 : 0.25, "lowpass", hard ? 900 : 1400, 0.7, hard ? 0.4 : 0.22, b.sfx, 300);
-    if (hard) this.sweep("sine", 120, 50, t, 0.25, 0.3, b.sfx);
+    this.splash(hard ? 1 : 0.6);
   }
 
   duck() {
@@ -246,8 +384,8 @@ export class Sound implements Sfx {
     const b = this.buses();
     if (!b) return;
     const t = b.ctx.currentTime;
-    this.noiseBurst(t, 1.2, "lowpass", 2500, 0.5, 0.6, b.sfx, 200);
-    this.sweep("sawtooth", 220, 40, t, 0.8, 0.25, b.sfx);
+    this.noiseBurst(t, 0.3, "bandpass", 900, 0.8, 0.4, b.sfx, 200);
+    this.splash(1.5);
     this.stopEngine();
   }
 
@@ -293,6 +431,47 @@ export class Sound implements Sfx {
     ]) {
       for (const f of [330, 415]) this.pluck("sawtooth", f, t + at, 0.06, len, b.sfx, 1200);
     }
+  }
+
+  /** A two-tone wail; louder as the police close in (see setSiren). */
+  siren(on: boolean) {
+    const b = this.buses();
+    if (!b) return;
+    const t = b.ctx.currentTime;
+    if (!on) {
+      if (this.sirenNodes) {
+        this.sirenNodes.gain.gain.setTargetAtTime(0, t, 0.3);
+        for (const o of this.sirenNodes.sources) o.stop(t + 1.5);
+        this.sirenNodes = null;
+      }
+      return;
+    }
+    if (this.sirenNodes) return;
+    const { ctx } = b;
+    const gainNode = gain(ctx, 0, b.sfx);
+    gainNode.gain.setTargetAtTime(0.03, t, 0.4);
+    const band = ctx.createBiquadFilter();
+    band.type = "bandpass";
+    band.frequency.value = 900;
+    band.Q.value = 0.8;
+    band.connect(gainNode);
+    const tone = ctx.createOscillator();
+    tone.type = "triangle";
+    tone.frequency.value = 760;
+    // The wail: pitch swept up and down by a slow oscillator.
+    const sweep = ctx.createOscillator();
+    sweep.frequency.value = 0.6;
+    sweep.connect(gain(ctx, 170, tone.frequency));
+    tone.connect(band);
+    tone.start();
+    sweep.start();
+    this.sirenNodes = { gain: gainNode, sources: [tone, sweep] };
+  }
+
+  /** 0 when far, 1 when right behind. */
+  setSiren(closeness: number) {
+    if (!this.sirenNodes || !this.ctx) return;
+    this.sirenNodes.gain.gain.setTargetAtTime(0.012 + 0.07 * closeness, this.ctx.currentTime, 0.2);
   }
 
   click() {
@@ -419,11 +598,24 @@ export class Sound implements Sfx {
   }
 }
 
-function gain(ctx: AudioContext, value: number, to?: AudioNode): GainNode {
+function gain(ctx: AudioContext, value: number, to?: AudioNode | AudioParam): GainNode {
   const g = ctx.createGain();
   g.gain.value = value;
-  if (to) g.connect(to);
+  // connect() has separate overloads for nodes and params, so narrow first.
+  if (to instanceof AudioNode) g.connect(to);
+  else if (to) g.connect(to);
   return g;
+}
+
+/** A tanh-like curve for a WaveShaper: drive adds grit. */
+function softClip(drive: number) {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * drive) / Math.tanh(drive);
+  }
+  return curve;
 }
 
 function makeNoise(ctx: AudioContext): AudioBuffer {

@@ -14,6 +14,7 @@ import {
   SPIN_TIME,
   START_SPEED,
   speedAt,
+  timeToLand,
   type ObstacleKind,
 } from "./config.ts";
 import { Course, type PowerKind } from "./course.ts";
@@ -36,6 +37,8 @@ export interface Sfx {
   nitro(): void;
   shield(): void;
   horn(): void;
+  /** The police siren: on when a chase starts, off when it ends. */
+  siren(on: boolean): void;
 }
 
 const quiet = () => {};
@@ -57,6 +60,7 @@ export const silentSfx: Sfx = {
   nitro: quiet,
   shield: quiet,
   horn: quiet,
+  siren: quiet,
 };
 
 export type Action = "left" | "right" | "up" | "down" | "nitro" | "tap";
@@ -91,8 +95,18 @@ export type Particle = {
   kind: "foam" | "spray" | "splash" | "debris" | "spark";
 };
 export type Popup = { text: string; t: number; tone: "good" | "great" | "bad" | "gold" };
-export type HintId = "lane" | "jump" | "duck" | "ramp" | "trick" | "nitro" | "banana" | "traffic";
-export type Outcome = { score: number; distance: number; coins: number; bestCombo: number; tricks: number; nearMisses: number };
+export type HintId = "lane" | "jump" | "duck" | "ramp" | "trick" | "nitro" | "banana" | "traffic" | "police";
+export type Outcome = {
+  score: number;
+  distance: number;
+  coins: number;
+  bestCombo: number;
+  tricks: number;
+  nearMisses: number;
+  escapes: number;
+  smashes: number;
+  powers: number;
+};
 
 const HINT_FOR: Partial<Record<ObstacleKind, HintId>> = {
   boat: "lane",
@@ -108,6 +122,21 @@ const HINT_FOR: Partial<Record<ObstacleKind, HintId>> = {
 /** Obstacles you can only pass beside: passing them close after a lane change is a near miss. */
 const BESIDE = new Set<ObstacleKind>(["boat", "rock", "jetski", "banana", "pillar"]);
 const STEP = 1 / 120;
+
+// The water police. A chase starts when heat (from reckless riding) boils over, or
+// when a patrol spots you on a long run. They close in slowly and surge on every
+// bump; nitro or a clean ride until they give up gets you away.
+export const CHASE = {
+  startGap: 50,
+  caughtGap: 5,
+  escapeGap: 85,
+  bumpSurge: 20,
+  /** They gain on you at first, then fall back once they tire. */
+  pursuit: 1.05,
+  tired: 0.82,
+  giveUpAfter: 28,
+  escapeBonus: 500,
+};
 const MAX_PARTICLES = 500;
 export const POPUP_SECONDS = 1.1;
 export const COMBO_STEP = 12;
@@ -141,7 +170,12 @@ export class Game {
     invulnerable: 0,
     slowed: 0,
     lastSwitch: -10,
+    /** Where the current lane change started, and how far into it we are. */
+    switchFrom: 0,
+    switchT: 1,
     jumpBuffer: 0,
+    /** Near edge of the ramp the current ramp jump took off from. */
+    rampZ: 0,
     /** Lean into turns, in radians: for drawing. */
     bank: 0,
     tumble: 0,
@@ -157,6 +191,12 @@ export class Game {
   bestCombo = 0;
   tricks = 0;
   nearMisses = 0;
+  escapes = 0;
+  smashes = 0;
+  powersTaken = 0;
+  /** 0 to 1: reckless riding draws the police. */
+  heat = 0;
+  readonly police = { active: false, gap: 0, time: 0, x: 0 };
   /** Seconds of simulated time. */
   time = 0;
   state: "run" | "crash" | "over" = "run";
@@ -173,6 +213,7 @@ export class Game {
   private lastCoin = -10;
   private wakeTimer = 0;
   private nitroReady = false;
+  private nextPatrol = 1100 + Math.random() * 500;
 
   constructor(options: Options) {
     this.sfx = options.sfx;
@@ -193,6 +234,9 @@ export class Game {
       bestCombo: this.bestCombo,
       tricks: this.tricks,
       nearMisses: this.nearMisses,
+      escapes: this.escapes,
+      smashes: this.smashes,
+      powers: this.powersTaken,
     };
   }
 
@@ -220,6 +264,8 @@ export class Game {
         p.fromLane = p.lane;
         p.lane = lane;
         p.lastSwitch = this.time;
+        p.switchFrom = p.x;
+        p.switchT = 0;
         this.sfx.lane();
         if (p.air === "none") this.burst(p.x, 0.3, p.z, 6, "spray", action === "left" ? 3 : -3);
         break;
@@ -234,7 +280,9 @@ export class Game {
         break;
       case "down":
         if (p.air !== "none") {
-          p.vy = Math.min(p.vy, SLAM_VY);
+          if (p.spinning) break; // dropping mid-flip would only end in a crash
+          // Over something (the wall a ramp clears): duck on landing instead of dropping onto it.
+          if (!this.underneath()) p.vy = Math.min(p.vy, SLAM_VY);
           p.slam = true;
         } else {
           p.duck = DUCK_TIME;
@@ -279,9 +327,14 @@ export class Game {
     const z0 = p.z;
     const x0 = p.x;
     p.z += p.speed * h;
+    // Lane changes ease in and out (a carve, not a slide), in the same time as before.
     const tx = LANE_X[p.lane];
-    const slide = (LANE_WIDTH / LANE_SWITCH_TIME) * h;
-    p.x = Math.abs(tx - p.x) <= slide ? tx : p.x + Math.sign(tx - p.x) * slide;
+    if (p.x !== tx) {
+      p.switchT += h;
+      const duration = (LANE_SWITCH_TIME * Math.abs(tx - p.switchFrom)) / LANE_WIDTH;
+      const k = Math.min(1, p.switchT / Math.max(duration, 1e-3));
+      p.x = p.switchFrom + (tx - p.switchFrom) * k * k * (3 - 2 * k);
+    }
     p.bank += ((p.x - x0) / h / 17 - p.bank) * Math.min(1, h * 14);
 
     if (p.air !== "none") {
@@ -306,7 +359,57 @@ export class Game {
     this.collect(z0, h);
     this.passBy();
     this.emit(h);
+    this.chase(h);
     if (this.state === "run") this.score += (p.z - z0) * this.multiplier * (p.double > 0 ? 2 : 1);
+  }
+
+  private chase(h: number) {
+    const p = this.player;
+    const cop = this.police;
+    if (this.state !== "run") return;
+    if (!cop.active) {
+      if (p.z > this.nextPatrol) this.heat = 1; // a patrol spots you
+      if (this.heat < 1 || p.z <= 300) {
+        this.heat = Math.max(0, this.heat - h * 0.015);
+      } else {
+        cop.active = true;
+        cop.gap = CHASE.startGap;
+        cop.time = 0;
+        cop.x = p.x;
+        this.heat = 0;
+        this.popup("Polairud mengejar!", "bad");
+        this.sfx.siren(true);
+        this.hint("police");
+      }
+      return;
+    }
+    cop.time += h;
+    cop.x += (p.x - cop.x) * Math.min(1, h * 1.5);
+    const pace = cop.time < CHASE.giveUpAfter ? CHASE.pursuit : CHASE.tired;
+    cop.gap += (p.speed - speedAt(p.z) * pace) * h;
+    if (cop.gap >= CHASE.escapeGap) {
+      cop.active = false;
+      this.escapes++;
+      this.nextPatrol = p.z + 1300 + Math.random() * 700;
+      this.popup(`Lolos dari Polairud! +${this.bonus(CHASE.escapeBonus)}`, "gold");
+      this.sfx.siren(false);
+      this.sfx.power("shield");
+    } else if (cop.gap <= CHASE.caughtGap) {
+      if (p.shield > 0) {
+        p.shield = 0;
+        cop.gap = 30;
+        this.popup("Pelampung menyelamatkanmu!", "good");
+        this.sfx.shield();
+      } else {
+        this.hit(null, "Ditangkap Polairud!");
+        this.sfx.siren(false);
+      }
+    }
+  }
+
+  /** Reckless riding warms things up; not while already being chased. */
+  private warm(amount: number) {
+    if (!this.police.active) this.heat = Math.min(1, this.heat + amount);
   }
 
   private jump() {
@@ -317,13 +420,16 @@ export class Game {
     this.sfx.jump();
   }
 
+  /** A backflip, but only one that can be finished before touching down: mashing never crashes. */
   private trick() {
     const p = this.player;
+    const left = timeToLand(p.y, p.vy);
     if (!p.spinning) {
+      if (left < SPIN_TIME + 0.05) return;
       p.spinning = true;
       p.spin = 0;
       this.sfx.spin();
-    } else if (p.queued < 2) {
+    } else if ((1 - p.spin + p.queued + 1) * SPIN_TIME + 0.05 <= left) {
       p.queued++;
     }
   }
@@ -443,14 +549,22 @@ export class Game {
 
   private launch(z0: number) {
     const p = this.player;
-    if (p.air !== "none" || this.state !== "run") return;
+    // A low hop over a ramp still catches it: pressing jump just before one is the natural thing to do.
+    if (p.air === "ramp" || p.y > 1.4 || this.state !== "run") return;
     for (const o of this.obstacles) {
       if (o.kind !== "ramp" || o.waiting) continue;
-      if (Math.abs(p.x - o.x) >= SPECS.ramp.halfWidth) continue;
-      if (z0 + PLAYER.front < o.z && p.z + PLAYER.front >= o.z) {
+      // Any of the hull over it, from the nose touching it until the tail leaves it.
+      if (p.z + PLAYER.front < o.z || z0 - PLAYER.back > o.z + SPECS.ramp.length) continue;
+      // Some of the hull over it, or already swerving onto it from the next lane:
+      // a late swerve is still a swerve, and the lane change finishes in the air.
+      const dx = Math.abs(p.x - o.x);
+      const onto = LANE_X[p.lane] === o.x && dx <= LANE_WIDTH + 0.01;
+      if (dx < SPECS.ramp.halfWidth + PLAYER.halfWidth || onto) {
         p.air = "ramp";
+        p.rampZ = o.z;
         p.vy = RAMP_VY;
         p.duck = 0;
+        p.jumpBuffer = 0;
         // A ramp always launches at full speed, so the arc clears what it was built to clear.
         p.slowed = 0;
         p.speed = Math.max(p.speed, speedAt(p.z));
@@ -481,6 +595,8 @@ export class Game {
       if (o.waiting || o.smashed >= 0) continue;
       const s = SPECS[o.kind];
       if (!s.solid) continue;
+      // Boats beside the ramp you took off from: brushed past on the way up.
+      if (p.air === "ramp" && o.z >= p.rampZ - 0.5 && o.z <= p.rampZ + SPECS.ramp.length) continue;
       if (p.z + PLAYER.front < o.z || z0 - PLAYER.back > o.z + s.length) continue;
       const reach = s.halfWidth + PLAYER.halfWidth;
       if (Math.abs(p.x - o.x) >= reach) continue;
@@ -500,15 +616,32 @@ export class Game {
     }
   }
 
+  /** Would dropping straight down from here land on something? */
+  private underneath(): boolean {
+    const p = this.player;
+    const reach = p.z + PLAYER.front + p.speed * timeToLand(p.y, Math.min(p.vy, SLAM_VY)) + 0.5;
+    return this.obstacles.some((o) => {
+      const s = SPECS[o.kind];
+      if (!s.solid || o.waiting || o.smashed >= 0) return false;
+      if (o.z > reach || o.z + s.length < p.z - PLAYER.back) return false;
+      return Math.abs(o.x - p.x) < s.halfWidth + PLAYER.halfWidth || Math.abs(o.x - LANE_X[p.lane]) < s.halfWidth + PLAYER.halfWidth;
+    });
+  }
+
   private bump(o: Obstacle) {
     const p = this.player;
     o.passed = true; // no near-miss reward for the boat you just hit
     p.lane = p.fromLane;
     const side = Math.sign(p.x - o.x) || 1;
     p.x = o.x + side * (SPECS[o.kind].halfWidth + PLAYER.halfWidth + 0.02);
+    p.switchFrom = p.x;
+    p.switchT = 0;
     p.slowed = 1;
     p.invulnerable = 0.3;
     this.combo = 0;
+    // The police surge on every bump while they are after you.
+    if (this.police.active) this.police.gap -= CHASE.bumpSurge;
+    else this.warm(0.3);
     this.shake = Math.min(1, this.shake + 0.5);
     this.popup("Aduh!", "bad");
     this.sfx.bump();
@@ -523,6 +656,7 @@ export class Game {
       this.shake = Math.min(1, this.shake + 0.5);
       this.popup("Pelampung menyelamatkanmu!", "good");
       this.sfx.shield();
+      this.warm(0.35);
       return;
     }
     this.state = "crash";
@@ -538,6 +672,10 @@ export class Game {
 
   private smash(o: Obstacle, score = true) {
     o.smashed = 0;
+    if (score) {
+      this.smashes++;
+      this.warm(0.12);
+    }
     const s = SPECS[o.kind];
     this.burst(o.x, s.bottom + s.height / 2, o.z, 16, "debris");
     this.burst(o.x, 0.3, o.z, 10, "splash");
@@ -574,6 +712,7 @@ export class Game {
       if (pw.taken || pw.z < z0 - PLAYER.back || pw.z > p.z + PLAYER.front) continue;
       if (Math.abs(pw.x - p.x) > 1.2 || p.y > 2.2) continue;
       pw.taken = true;
+      this.powersTaken++;
       const names: Record<PowerKind, string> = {
         magnet: "Magnet koin!",
         shield: "Pelampung!",
@@ -604,6 +743,7 @@ export class Game {
         this.addCombo(1); // went over or under it
       } else if (gap < 1.6 && BESIDE.has(o.kind) && this.time - p.lastSwitch < 0.7) {
         this.nearMisses++;
+        this.warm(0.1);
         this.addCombo(2);
         this.charge(0.07);
         this.popup(`Nyaris! +${this.bonus(50)}`, "good");
@@ -712,6 +852,43 @@ export class Game {
       this.popup("Nitro siap!", "gold");
       this.hint("nitro");
     }
+  }
+
+  /**
+   * Back on the water after a crash (paid for with coins): the way ahead is
+   * cleared, the police drop back, and a moment of grace to get going again.
+   */
+  revive() {
+    if (this.state === "run") return;
+    const p = this.player;
+    this.state = "run";
+    this.cause = "";
+    this.crashTime = 0;
+    p.tumble = 0;
+    p.y = 0;
+    p.vy = 0;
+    p.air = "none";
+    p.spin = 0;
+    p.spinning = false;
+    p.queued = 0;
+    p.spins = 0;
+    p.duck = 0;
+    p.slowed = 0;
+    p.x = LANE_X[p.lane];
+    p.switchFrom = p.x;
+    p.switchT = 1;
+    p.speed = speedAt(p.z) * 0.7;
+    p.invulnerable = 2.5;
+    for (const o of this.obstacles) {
+      if (!o.waiting && o.z + SPECS[o.kind].length > p.z - 5 && o.z < p.z + 70) o.smashed = 0;
+    }
+    if (this.police.active) this.police.gap = Math.max(this.police.gap, 40);
+    this.popup("Lanjut!", "gold");
+  }
+
+  /** For news from outside the simulation, such as a finished mission. */
+  announce(text: string, tone: Popup["tone"] = "gold") {
+    this.popup(text, tone);
   }
 
   private popup(text: string, tone: Popup["tone"]) {

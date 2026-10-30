@@ -1,4 +1,5 @@
-import type { Game, Outcome } from "./game.ts";
+import { COMBO_STEP, type Game, type Outcome } from "./game.ts";
+import { describe, missionAt, type Mission, type MissionState } from "./missions.ts";
 import { SKINS, type Save, type Skin } from "./save.ts";
 
 export type Screen = "title" | "garage" | "playing" | "paused" | "over";
@@ -9,6 +10,8 @@ export type UiHandlers = {
   resume: () => void;
   restart: () => void;
   menu: () => void;
+  revive: () => void;
+  quality: () => void;
   garage: () => void;
   closeGarage: () => void;
   choose: (skin: Skin) => void;
@@ -83,6 +86,8 @@ export class Ui {
     wire("btn-restart", handlers.restart);
     wire("btn-quit", handlers.menu);
     wire("btn-again", handlers.play);
+    wire("btn-revive", handlers.revive);
+    wire("btn-quality", handlers.quality);
     wire("btn-over-garage", handlers.garage);
     wire("btn-over-menu", handlers.menu);
     // pointerdown, not click: on a phone the nitro button must react instantly.
@@ -106,6 +111,10 @@ export class Ui {
     this.hud.hidden = !(screen === "playing" || screen === "paused");
     if (screen !== "playing") this.clearHints();
     const focus = { title: "btn-play", garage: "btn-garage-back", playing: null, paused: "btn-resume", over: "btn-again" }[screen];
+    if (screen === "over" && !el<HTMLButtonElement>("btn-revive").disabled && !el("btn-revive").hidden) {
+      el("btn-revive").focus({ preventScroll: true });
+      return;
+    }
     if (focus) el(focus).focus({ preventScroll: true });
   }
 
@@ -152,7 +161,58 @@ export class Ui {
     );
   }
 
-  showOver(outcome: Outcome, cause: string, best: boolean) {
+  /** The three current goals, with how far each has got. */
+  renderMissions(state: MissionState) {
+    el("missions").replaceChildren(
+      ...state.active.map((slot) => {
+        const m = missionAt(slot.n);
+        const li = document.createElement("li");
+        const text = document.createElement("span");
+        text.textContent = describe(m);
+        const reward = document.createElement("b");
+        reward.textContent = `+${m.reward}`;
+        li.append(text, reward);
+        if (m.total && slot.progress > 0) {
+          const bar = document.createElement("i");
+          bar.style.width = `${Math.min(100, (slot.progress / m.target) * 100)}%`;
+          li.append(bar);
+        }
+        return li;
+      }),
+    );
+  }
+
+  setQuality(quality: "auto" | "high" | "low") {
+    el("btn-quality").textContent = `Grafis: ${{ auto: "Otomatis", high: "Tinggi", low: "Rendah" }[quality]}`;
+  }
+
+  showOver(
+    outcome: Outcome,
+    cause: string,
+    best: boolean,
+    done: Mission[] = [],
+    reward = 0,
+    revive: { cost: number; coins: number } = { cost: 0, coins: 0 },
+  ) {
+    const again = el<HTMLButtonElement>("btn-revive");
+    again.hidden = revive.cost === 0;
+    again.disabled = revive.coins < revive.cost;
+    again.textContent = revive.coins < revive.cost ? `Lanjut · ${revive.cost} koin (kurang)` : `LANJUT · ${revive.cost} koin`;
+    const missions = el("over-missions");
+    missions.hidden = done.length === 0;
+    missions.replaceChildren(
+      ...done.map((m) => {
+        const li = document.createElement("li");
+        li.textContent = `✓ ${describe(m)}`;
+        return li;
+      }),
+    );
+    if (done.length) {
+      const total = document.createElement("li");
+      total.className = "reward";
+      total.textContent = `Hadiah misi +${reward} koin`;
+      missions.append(total);
+    }
     el("over-cause").textContent = cause;
     el("over-score").textContent = outcome.score.toLocaleString("id-ID");
     el("over-best").hidden = !best;
@@ -161,6 +221,8 @@ export class Ui {
       ["Koin", `+${outcome.coins}`],
       ["Salto", String(outcome.tricks)],
       ["Nyaris", String(outcome.nearMisses)],
+      ["Lolos polisi", String(outcome.escapes)],
+      ["Kombo terbaik", `×${Math.min(3, 1 + Math.floor(outcome.bestCombo / COMBO_STEP) * 0.5)}`],
     ];
     el("over-stats").replaceChildren(
       ...stats.map(([label, value]) => {
