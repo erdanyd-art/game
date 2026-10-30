@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2b1c55" />
+    <meta name="description" content="Gas pol jetski di pantai Bali saat senja: hindari jukung, lompati ombak, salto, dan nyalakan nitro." />
+    <title>Gaspol! Jetski Pantai</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800;900&display=swap" rel="stylesheet" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23ff9f1c'/%3E%3Cpath d='M6 20h20l-3 5H9z' fill='%23fff'/%3E%3Ccircle cx='16' cy='11' r='4' fill='%231d3557'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <canvas id="game" aria-label="Jetski melaju di laut dekat pantai saat senja"></canvas>
+
+    <div id="hud" hidden>
+      <div class="hud-left">
+        <div class="hud-score" id="hud-score">0</div>
+        <div class="hud-sub">
+          <span id="hud-distance">0 m</span>
+          <span class="mult" id="hud-mult" hidden></span>
+        </div>
+        <ul class="powers" id="hud-powers" aria-label="Power-up aktif"></ul>
+      </div>
+      <div class="hud-right">
+        <div class="coins" aria-label="Koin">
+          <span class="coin-icon" aria-hidden="true"></span><span id="hud-coins">0</span>
+        </div>
+        <button class="round-btn" id="btn-mute" type="button" aria-label="Matikan suara" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9Z" /><path class="sound-on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /><path class="sound-off" d="m16 9 6 6m0-6-6 6" /></svg>
+        </button>
+        <button class="round-btn" id="btn-pause" type="button" aria-label="Jeda">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" /></svg>
+        </button>
+      </div>
+      <div class="nitro" id="nitro">
+        <div class="nitro-bar" aria-hidden="true"><div class="nitro-fill" id="nitro-fill"></div></div>
+        <button class="nitro-btn" id="btn-nitro" type="button" disabled>NITRO<kbd>Shift</kbd></button>
+      </div>
+    </div>
+
+    <div id="hint" role="status" aria-live="polite"></div>
+
+    <section id="screen-title" class="screen" aria-labelledby="logo">
+      <div class="panel title-panel">
+        <h1 class="logo" id="logo">GASPOL<span>!</span></h1>
+        <p class="tagline">Jetski Pantai</p>
+        <div class="records">
+          <div><span>Rekor</span><strong id="title-best">0</strong></div>
+          <div><span>Koin</span><strong id="title-coins">0</strong></div>
+        </div>
+        <button class="big-btn" id="btn-play" type="button">MAIN</button>
+        <div class="row-btns">
+          <button class="pill-btn" id="btn-garage" type="button">Garasi</button>
+          <button class="pill-btn" id="btn-sound" type="button">Suara: nyala</button>
+        </div>
+        <p class="controls" id="controls"></p>
+      </div>
+    </section>
+
+    <section id="screen-garage" class="screen" aria-labelledby="garage-title" hidden>
+      <div class="panel">
+        <h2 class="screen-title" id="garage-title">Garasi</h2>
+        <p class="wallet"><span class="coin-icon" aria-hidden="true"></span><strong id="garage-coins">0</strong> koin</p>
+        <ul class="skins" id="skins"></ul>
+        <button class="pill-btn" id="btn-garage-back" type="button">Kembali</button>
+      </div>
+    </section>
+
+    <section id="screen-pause" class="screen" aria-labelledby="pause-title" hidden>
+      <div class="panel narrow">
+        <h2 class="screen-title" id="pause-title">Jeda</h2>
+        <button class="big-btn" id="btn-resume" type="button">LANJUT</button>
+        <div class="row-btns">
+          <button class="pill-btn" id="btn-restart" type="button">Ulangi</button>
+          <button class="pill-btn" id="btn-quit" type="button">Menu</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-over" class="screen" aria-labelledby="over-cause" hidden>
+      <div class="panel narrow">
+        <p class="over-cause" id="over-cause">Nyemplung!</p>
+        <div class="over-score" id="over-score">0</div>
+        <p class="new-best" id="over-best" hidden>Rekor baru!</p>
+        <dl class="over-stats" id="over-stats"></dl>
+        <button class="big-btn" id="btn-again" type="button">MAIN LAGI</button>
+        <div class="row-btns">
+          <button class="pill-btn" id="btn-over-garage" type="button">Garasi</button>
+          <button class="pill-btn" id="btn-over-menu" type="button">Menu</button>
+        </div>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
