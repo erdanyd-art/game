@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#03080b" />
+    <meta name="description" content="Pandu kawanan kunang-kunang menyusuri sungai bakau. Berkedip seirama gamelan, bawa cahaya pulang sebelum fajar." />
+    <title>Kunang</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2303080b'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23e6ff8a' opacity='.25'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%23f6ffd0'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <canvas id="game" aria-label="Sungai bakau di malam hari, dengan kawanan kunang-kunang"></canvas>
+
+    <div id="hud" hidden>
+      <div class="hud-swarm">
+        <div class="hud-count" id="hud-count">0</div>
+        <div class="hud-label">kunang-kunang</div>
+        <div class="hud-sync" title="Sinkron: naik saat kamu berkedip tepat di ketukan">
+          <div id="hud-sync"></div>
+        </div>
+        <div class="hud-combo" id="hud-combo"></div>
+      </div>
+      <div class="hud-journey">
+        <div class="track" aria-label="Jarak ke Pohon Kunang">
+          <div class="track-fill" id="hud-progress"></div>
+          <svg class="track-tree" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="10" r="7" />
+            <path d="M12 14v8M9 22h6" />
+          </svg>
+        </div>
+        <div class="hud-dawn" id="hud-dawn"></div>
+      </div>
+      <div class="hud-buttons">
+        <button class="icon-btn" id="btn-mute" type="button" aria-label="Matikan suara" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9Z" /><path class="sound-on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" /><path class="sound-off" d="m16 9 6 6m0-6-6 6" /></svg>
+        </button>
+        <button class="icon-btn" id="btn-pause" type="button" aria-label="Jeda">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" /></svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="intro" aria-hidden="true">
+      <p class="intro-night" id="intro-night"></p>
+      <p class="intro-name" id="intro-name"></p>
+      <p class="intro-tag" id="intro-tag"></p>
+    </div>
+
+    <div id="hint" role="status" aria-live="polite"></div>
+
+    <section id="screen-title" class="screen" aria-labelledby="logo">
+      <div class="panel">
+        <h1 class="logo" id="logo">Kunang</h1>
+        <p class="lede">
+          Pandu kawanan kunang-kunang menyusuri sungai bakau. Berkedip seirama gamelan,
+          panggil yang tersesat, dan bawa cahaya pulang sebelum fajar.
+        </p>
+        <ol class="nights" id="nights" aria-label="Pilih malam"></ol>
+        <p class="controls" id="controls"></p>
+        <button class="text-btn" id="btn-sound" type="button"></button>
+      </div>
+    </section>
+
+    <section id="screen-pause" class="screen" aria-labelledby="pause-title" hidden>
+      <div class="panel narrow">
+        <h2 class="screen-title" id="pause-title">Jeda</h2>
+        <div class="actions stack">
+          <button class="btn primary" id="btn-resume" type="button">Lanjut</button>
+          <button class="btn" id="btn-restart" type="button">Ulangi malam ini</button>
+          <button class="btn ghost" id="btn-quit" type="button">Ke menu</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-result" class="screen" aria-labelledby="result-title" hidden>
+      <div class="panel narrow">
+        <p class="eyebrow" id="result-night"></p>
+        <h2 class="screen-title" id="result-title"></h2>
+        <div class="result-stars" id="result-stars"></div>
+        <p class="result-line" id="result-line"></p>
+        <dl class="result-stats" id="result-stats"></dl>
+        <div class="actions stack">
+          <button class="btn primary" id="btn-next" type="button">Malam berikutnya</button>
+          <button class="btn" id="btn-retry" type="button">Ulangi</button>
+          <button class="btn ghost" id="btn-menu" type="button">Ke menu</button>
+        </div>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
